@@ -34,6 +34,7 @@ const camera = new THREE.PerspectiveCamera(
   0.05,
   200
 );
+scene.add(camera); // needed so the held item (a child of the camera) renders
 
 // ----------------------------------------------------------- LIGHTING
 scene.add(new THREE.HemisphereLight(0xdfe9f5, 0x40454c, 0.85));

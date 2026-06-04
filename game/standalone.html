@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Network Closet 3D — IT Fundamentals</title>
+
+    <!-- Pulls the Three.js engine from a CDN (needs internet the first time). -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        height: 100%; overflow: hidden; background: #000;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        color: #fff; user-select: none;
+      }
+      #scene { display: block; width: 100vw; height: 100vh; }
+      .hidden { display: none !important; }
+
+      #crosshair {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        font-size: 22px; font-weight: bold; color: rgba(255,255,255,0.75);
+        text-shadow: 0 0 3px #000; pointer-events: none; z-index: 10;
+      }
+      #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+      #hud-top {
+        position: absolute; top: 16px; left: 16px; display: flex;
+        flex-direction: column; gap: 4px; font-size: 14px; line-height: 1.5;
+        text-shadow: 0 1px 3px #000;
+      }
+      #hud-location { font-size: 18px; font-weight: 700; color: #7fd1ff; }
+      #hud-racked { color: #b6ffb0; }
+      #prompt {
+        position: absolute; bottom: 48px; left: 50%; transform: translateX(-50%);
+        padding: 8px 18px; background: rgba(0,0,0,0.6);
+        border: 1px solid rgba(255,255,255,0.25); border-radius: 8px;
+        font-size: 16px; white-space: nowrap; opacity: 0; transition: opacity 0.12s ease;
+      }
+      #prompt.show { opacity: 1; }
+      #prompt b {
+        display: inline-block; min-width: 22px; text-align: center; margin-right: 6px;
+        padding: 1px 6px; background: #7fd1ff; color: #042; border-radius: 4px; font-weight: 800;
+      }
+      #overlay {
+        position: fixed; inset: 0; z-index: 20; display: flex; align-items: center;
+        justify-content: center; background: radial-gradient(circle at 50% 30%, #1a2330, #05080d);
+      }
+      #overlay-card {
+        width: min(540px, 92vw); padding: 32px 36px; background: rgba(10,16,24,0.92);
+        border: 1px solid rgba(127,209,255,0.35); border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.6); text-align: center;
+      }
+      #overlay-card h1 { font-size: 30px; letter-spacing: 0.5px; margin-bottom: 6px; }
+      .subtitle { color: #9fb3c8; margin-bottom: 20px; }
+      #controls {
+        list-style: none; text-align: left; display: grid; grid-template-columns: 1fr 1fr;
+        gap: 6px 18px; margin: 0 auto 18px; max-width: 420px; font-size: 14px; color: #cfe3f5;
+      }
+      #controls b { color: #7fd1ff; }
+      .goal { font-size: 14px; color: #cdd9e5; margin-bottom: 22px; line-height: 1.5; }
+      #start-btn {
+        padding: 12px 28px; font-size: 18px; font-weight: 700; color: #042;
+        background: #7fd1ff; border: none; border-radius: 10px; cursor: pointer;
+        transition: transform 0.1s ease, background 0.1s ease;
+      }
+      #start-btn:hover { background: #a6e0ff; transform: translateY(-1px); }
+      #error {
+        margin-top: 16px; color: #ff9b9b; font-size: 13px; line-height: 1.5; display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+    <div id="crosshair" class="hidden">+</div>
+    <div id="hud" class="hidden">
+      <div id="hud-top">
+        <div id="hud-location">First Floor</div>
+        <div id="hud-racked">Items racked: 0</div>
+        <div id="hud-held">Hands: empty</div>
+      </div>
+      <div id="prompt"></div>
+    </div>
+    <div id="overlay">
+      <div id="overlay-card">
+        <h1>Network Closet 3D</h1>
+        <p class="subtitle">A walk-around version of your Packet Tracer layout.</p>
+        <ul id="controls">
+          <li><b>Move</b> — W A S D</li>
+          <li><b>Look</b> — Mouse</li>
+          <li><b>Sprint</b> — Shift</li>
+          <li><b>Pick up / Place in rack</b> — E</li>
+          <li><b>Drop held item</b> — Q</li>
+          <li><b>Pause</b> — Esc</li>
+        </ul>
+        <p class="goal">
+          Goal: explore both floors, pick up the network gear scattered around the
+          offices, and rack it in the two <b>wiring closets</b>.
+        </p>
+        <button id="start-btn">Click to Play</button>
+        <p id="error"></p>
+      </div>
+    </div>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+
+      /* ============================================================ CONSTANTS */
+      const FLOOR2_Y = 3.2;   // height of the second floor
+      const WALL_H = 3.0;     // one storey's wall height
+      const T = 0.2;          // wall thickness
+      const HALF_W = 10, HALF_D = 6;
+      const EYE_HEIGHT = 1.6, RADIUS = 0.35;
+      const WALK_SPEED = 4.0, SPRINT_SPEED = 7.0, GRAVITY = 14.0;
+      const RAMP = { minX: -1.6, maxX: 1.6, zBottom: 2.5, zTop: -2.0 };
+
+      /* ============================================================ MATERIALS */
+      const MAT = {
+        exterior: new THREE.MeshStandardMaterial({ color: 0x0c0c0e, roughness: 0.9 }),
+        interior: new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.95 }),
+        railing: new THREE.MeshStandardMaterial({ color: 0x222428, roughness: 0.8 }),
+        floor1: new THREE.MeshStandardMaterial({ color: 0xc9cdd2, roughness: 1 }),
+        floor2: new THREE.MeshStandardMaterial({ color: 0xb3b8d6, roughness: 1 }),
+        stair: new THREE.MeshStandardMaterial({ color: 0x6b7077, roughness: 0.95 }),
+        furniture: new THREE.MeshStandardMaterial({ color: 0x8a8f96, roughness: 0.8 }),
+        desk: new THREE.MeshStandardMaterial({ color: 0x9aa0a7, roughness: 0.85 }),
+        sofa: new THREE.MeshStandardMaterial({ color: 0x5c6470, roughness: 0.9 }),
+        plantPot: new THREE.MeshStandardMaterial({ color: 0x7a4a2b, roughness: 0.9 }),
+        plantLeaf: new THREE.MeshStandardMaterial({ color: 0x2e8b3d, roughness: 0.8 }),
+        rack: new THREE.MeshStandardMaterial({ color: 0x15171b, roughness: 0.6, metalness: 0.3 }),
+      };
+
+      /* ===================================================== TEXT LABEL SPRITE */
+      function makeTextSprite(text, color = 0xffffff, yOffset = 0.9) {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        const font = 48;
+        ctx.font = `bold ${font}px Segoe UI, sans-serif`;
+        const w = ctx.measureText(text).width + 40;
+        canvas.width = w; canvas.height = font + 28;
+        ctx.font = `bold ${font}px Segoe UI, sans-serif`;
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        roundRect(ctx, 0, 0, canvas.width, canvas.height, 14); ctx.fill();
+        ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: texture, depthTest: true, transparent: true })
+        );
+        const scale = 0.0045;
+        sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
+        sprite.position.set(0, yOffset, 0);
+        return sprite;
+      }
+      function roundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath(); ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+      }
+
+      /* ============================================================ THE WORLD */
+      function buildWorld(scene) {
+        const group = new THREE.Group();
+        scene.add(group);
+        const colliders = [];
+        const flatSlabs = [];
+
+        function addWall(x1, z1, x2, z2, yBase, height, material, solid = true) {
+          const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+          const minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+          const w = Math.max(maxX - minX, T), d = Math.max(maxZ - minZ, T);
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, height, d), material);
+          mesh.position.set((minX + maxX) / 2, yBase + height / 2, (minZ + maxZ) / 2);
+          mesh.castShadow = true; mesh.receiveShadow = true;
+          group.add(mesh);
+          if (solid) colliders.push({ minX, maxX, minZ, maxZ, minY: yBase, maxY: yBase + height });
+          return mesh;
+        }
+        function addSlab(minX, minZ, maxX, maxZ, y, material) {
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(maxX - minX, T, maxZ - minZ), material);
+          mesh.position.set((minX + maxX) / 2, y - T / 2, (minZ + maxZ) / 2);
+          mesh.receiveShadow = true;
+          group.add(mesh);
+          flatSlabs.push({ minX, maxX, minZ, maxZ, y });
+        }
+
+        // Floors
+        addSlab(-HALF_W, -HALF_D, HALF_W, HALF_D, 0, MAT.floor1);
+        addSlab(-HALF_W, -HALF_D, -3, HALF_D, FLOOR2_Y, MAT.floor2);   // Office 1
+        addSlab(3, -HALF_D, HALF_W, HALF_D, FLOOR2_Y, MAT.floor2);     // Office 2
+        addSlab(-3, -HALF_D, 3, RAMP.zTop, FLOOR2_Y, MAT.floor2);      // center landing/closet
+
+        // Exterior walls (black, full height)
+        const EXT_H = FLOOR2_Y + WALL_H;
+        addWall(-HALF_W, -HALF_D, HALF_W, -HALF_D, 0, EXT_H, MAT.exterior);
+        addWall(-HALF_W, HALF_D, HALF_W, HALF_D, 0, EXT_H, MAT.exterior);
+        addWall(-HALF_W, -HALF_D, -HALF_W, HALF_D, 0, EXT_H, MAT.exterior);
+        addWall(HALF_W, -HALF_D, HALF_W, HALF_D, 0, EXT_H, MAT.exterior);
+
+        // First-floor partitions (with doorways)
+        addWall(-3, -HALF_D, -3, -0.8, 0, WALL_H, MAT.interior);
+        addWall(-3, 0.8, -3, HALF_D, 0, WALL_H, MAT.interior);
+        addWall(3, -HALF_D, 3, -0.8, 0, WALL_H, MAT.interior);
+        addWall(3, 0.8, 3, HALF_D, 0, WALL_H, MAT.interior);
+        addWall(-HALF_W, 0, -9, 0, 0, WALL_H, MAT.interior);
+        addWall(-7.5, 0, -3, 0, 0, WALL_H, MAT.interior);
+
+        // Second-floor partitions (with doorways at the landing)
+        addWall(-3, -HALF_D, -3, -3, FLOOR2_Y, WALL_H, MAT.interior);
+        addWall(-3, -2, -3, HALF_D, FLOOR2_Y, WALL_H, MAT.interior);
+        addWall(3, -HALF_D, 3, -3, FLOOR2_Y, WALL_H, MAT.interior);
+        addWall(3, -2, 3, HALF_D, FLOOR2_Y, WALL_H, MAT.interior);
+
+        // Stairwell railings (so you don't fall in)
+        addWall(-3, RAMP.zTop, RAMP.minX, RAMP.zTop, FLOOR2_Y, 1.1, MAT.railing);
+        addWall(RAMP.maxX, RAMP.zTop, 3, RAMP.zTop, FLOOR2_Y, 1.1, MAT.railing);
+
+        // Visible staircase steps under the climb ramp
+        const steps = 12;
+        const run = (RAMP.zBottom - RAMP.zTop) / steps;
+        for (let i = 0; i < steps; i++) {
+          const z = RAMP.zBottom - run * (i + 0.5);
+          const h = FLOOR2_Y * ((i + 1) / steps);
+          const step = new THREE.Mesh(
+            new THREE.BoxGeometry(RAMP.maxX - RAMP.minX, h, run + 0.02), MAT.stair
+          );
+          step.position.set(0, h / 2, z);
+          step.castShadow = true; step.receiveShadow = true;
+          group.add(step);
+        }
+
+        addFurniture(group);
+
+        // Racks (one per wiring closet)
+        const racks = [
+          makeRack(group, -8.2, -4.6, 0, "MDF Rack"),
+          makeRack(group, 0, -4.8, FLOOR2_Y, "IDF Rack"),
+        ];
+        for (const r of racks) colliders.push(r.collider);
+
+        const itemSpawns = [
+          { type: "router", x: -6.5, z: -3.5, y: 0 },
+          { type: "switch", x: -5.0, z: -2.0, y: 0 },
+          { type: "patch_panel", x: -7.5, z: 4.5, y: 0 },
+          { type: "desktop_pc", x: -4.5, z: 4.2, y: 0 },
+          { type: "ip_phone", x: -3.6, z: 2.0, y: 0 },
+          { type: "patch_cable", x: 6.5, z: -3.5, y: 0 },
+          { type: "wifi_ap", x: 7.5, z: 3.5, y: 0 },
+          { type: "cable_mgmt", x: -7.0, z: 2.5, y: FLOOR2_Y },
+          { type: "pdu", x: -5.0, z: -3.0, y: FLOOR2_Y },
+          { type: "patch_cable", x: 6.5, z: 2.5, y: FLOOR2_Y },
+          { type: "ip_phone", x: 7.5, z: -3.0, y: FLOOR2_Y },
+          { type: "wifi_ap", x: 0.0, z: -4.0, y: FLOOR2_Y },
+        ];
+
+        const STEP_UP = 0.6;
+        const rampHeightAt = (z) =>
+          THREE.MathUtils.clamp((RAMP.zBottom - z) / (RAMP.zBottom - RAMP.zTop), 0, 1) * FLOOR2_Y;
+
+        function groundHeightAt(x, z, currentY) {
+          let best = -Infinity;
+          for (const s of flatSlabs) {
+            if (x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ && s.y <= currentY + STEP_UP)
+              best = Math.max(best, s.y);
+          }
+          if (x >= RAMP.minX && x <= RAMP.maxX && z >= RAMP.zTop && z <= RAMP.zBottom) {
+            const h = rampHeightAt(z);
+            if (h <= currentY + STEP_UP) best = Math.max(best, h);
+          }
+          return best === -Infinity ? null : best;
+        }
+
+        return {
+          group, colliders, racks, itemSpawns, groundHeightAt, floor2Y: FLOOR2_Y,
+          spawnPoint: new THREE.Vector3(-6, 0, 4.5),
+        };
+      }
+
+      function makeRack(group, x, z, baseY, label) {
+        const rack = new THREE.Group();
+        rack.position.set(x, baseY, z);
+        group.add(rack);
+        const W = 1.0, D = 0.9, H = 2.0;
+        const panel = (w, h, d, px, py, pz) => {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), MAT.rack);
+          m.position.set(px, py, pz); m.castShadow = true; rack.add(m);
+        };
+        panel(W, H, 0.05, 0, H / 2, -D / 2);
+        panel(0.05, H, D, -W / 2, H / 2, 0);
+        panel(0.05, H, D, W / 2, H / 2, 0);
+        panel(W, 0.05, D, 0, H, 0);
+        panel(W, 0.05, D, 0, 0.02, 0);
+        rack.add(makeTextSprite(label, 0x7fd1ff, 2.4));
+
+        const slotCount = 6;
+        const slots = [];
+        for (let i = 0; i < slotCount; i++) {
+          const sy = 0.35 + (i / (slotCount - 1)) * (H - 0.7);
+          slots.push({ filled: false, position: new THREE.Vector3(x, baseY + sy, z + D / 2 - 0.18) });
+        }
+        return {
+          group: rack, position: new THREE.Vector3(x, baseY, z), slots,
+          collider: { minX: x - W / 2, maxX: x + W / 2, minZ: z - D / 2, maxZ: z + D / 2, minY: baseY, maxY: baseY + H },
+          nextFreeSlot() { return this.slots.find((s) => !s.filled) || null; },
+        };
+      }
+
+      function addFurniture(group) {
+        const box = (w, h, d, x, y, z, mat) => {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+          m.position.set(x, y + h / 2, z); m.castShadow = true; m.receiveShadow = true;
+          group.add(m); return m;
+        };
+        const desk = (x, z, y = 0) => {
+          box(1.6, 0.75, 0.8, x, y, z, MAT.desk);
+          box(0.4, 0.45, 0.05, x, y + 0.75, z - 0.3, MAT.furniture);
+        };
+        const plant = (x, z, y = 0) => {
+          box(0.3, 0.3, 0.3, x, y, z, MAT.plantPot);
+          const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 10), MAT.plantLeaf);
+          leaf.position.set(x, y + 0.6, z); leaf.castShadow = true; group.add(leaf);
+        };
+
+        // First floor
+        desk(-7.5, -3.5);
+        plant(-9.2, -5.2);
+        box(2.6, 0.75, 0.7, -6.5, 0, 3.0, MAT.desk);
+        box(0.7, 0.75, 2.0, -8.0, 0, 4.0, MAT.desk);
+        box(2.4, 0.6, 0.9, 6.5, 0, -4.8, MAT.sofa);
+        box(0.9, 0.6, 1.0, 4.6, 0, -3.6, MAT.sofa);
+        box(0.9, 0.6, 1.0, 8.4, 0, -3.6, MAT.sofa);
+        box(1.4, 0.35, 0.7, 6.5, 0, -3.4, MAT.furniture);
+        const table = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.75, 20), MAT.desk);
+        table.position.set(7.0, 0.375, 3.5); table.castShadow = true; group.add(table);
+        for (let a = 0; a < 4; a++) {
+          const ang = (a / 4) * Math.PI * 2;
+          box(0.45, 0.9, 0.45, 7.0 + Math.cos(ang) * 1.4, 0, 3.5 + Math.sin(ang) * 1.4, MAT.furniture);
+        }
+        plant(9.2, -5.2);
+
+        // Second floor
+        desk(-7.0, -3.5, FLOOR2_Y);
+        box(0.7, 1.6, 1.6, -9.4, FLOOR2_Y, 3.5, MAT.furniture);
+        plant(-9.2, -5.2, FLOOR2_Y);
+        desk(7.0, -3.5, FLOOR2_Y);
+        box(0.7, 1.6, 1.6, 9.4, FLOOR2_Y, 3.5, MAT.furniture);
+        plant(9.2, -5.2, FLOOR2_Y);
+      }
+
+      /* ============================================================ THE GEAR */
+      const ITEM_TYPES = {
+        router: { name: "Router", color: 0x2f6fed, size: [0.7, 0.15, 0.5], rackable: true },
+        switch: { name: "Switch", color: 0x2fae57, size: [0.7, 0.12, 0.5], rackable: true },
+        patch_panel: { name: "Patch Panel", color: 0x444b55, size: [0.7, 0.1, 0.45], rackable: true },
+        cable_mgmt: { name: "Cable Manager", color: 0x9aa0a7, size: [0.7, 0.1, 0.3], rackable: true },
+        pdu: { name: "PDU / Power Strip", color: 0x1c1c1c, size: [0.7, 0.1, 0.3], rackable: true },
+        patch_cable: { name: "Patch Cables", color: 0xf2c521, size: [0.3, 0.25, 0.3], rackable: true },
+        desktop_pc: { name: "Desktop PC", color: 0xd8d2c4, size: [0.25, 0.5, 0.5], rackable: false },
+        ip_phone: { name: "IP Phone", color: 0x2a2d33, size: [0.3, 0.12, 0.28], rackable: false },
+        wifi_ap: { name: "Wireless AP", color: 0xf4f6f8, size: [0.45, 0.1, 0.45], rackable: false },
+      };
+
+      class ItemManager {
+        constructor(scene, world) {
+          this.scene = scene; this.world = world;
+          this.items = []; this.held = null; this.rackedCount = 0;
+        }
+        spawnAll() {
+          for (const s of this.world.itemSpawns) this.spawnItem(s.type, s.x, s.y, s.z);
+        }
+        spawnItem(type, x, y, z) {
+          const def = ITEM_TYPES[type];
+          if (!def) return;
+          const [w, h, d] = def.size;
+          const obj = new THREE.Group();
+          let body;
+          if (type === "wifi_ap") {
+            body = new THREE.Mesh(new THREE.CylinderGeometry(w / 2, w / 2, h, 18),
+              new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.5 }));
+          } else if (type === "patch_cable") {
+            body = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.05, 10, 20),
+              new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.6 }));
+            body.rotation.x = Math.PI / 2;
+          } else {
+            body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+              new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.5, metalness: 0.1 }));
+          }
+          body.castShadow = true; obj.add(body);
+          obj.add(makeTextSprite(def.name, 0xffffff, Math.max(h, 0.25) + 0.35));
+          obj.position.set(x, y + h / 2 + 0.02, z);
+          obj.userData = { type, def, racked: false };
+          this.scene.add(obj); this.items.push(obj);
+          return obj;
+        }
+        findNearestPickup(playerPos, range = 1.8) {
+          let best = null, bestD = range * range;
+          for (const item of this.items) {
+            if (item === this.held) continue;
+            if (Math.abs(item.position.y - playerPos.y) > 1.6) continue;
+            const dx = item.position.x - playerPos.x, dz = item.position.z - playerPos.z;
+            const d = dx * dx + dz * dz;
+            if (d < bestD) { bestD = d; best = item; }
+          }
+          return best;
+        }
+        findNearestRack(playerPos, range = 2.2) {
+          let best = null, bestD = range * range;
+          for (const rack of this.world.racks) {
+            if (!rack.nextFreeSlot()) continue;
+            if (Math.abs(rack.position.y - playerPos.y) > 1.6) continue;
+            const dx = rack.position.x - playerPos.x, dz = rack.position.z - playerPos.z;
+            const d = dx * dx + dz * dz;
+            if (d < bestD) { bestD = d; best = rack; }
+          }
+          return best;
+        }
+        pickUp(item, camera) {
+          if (this.held) return;
+          this.held = item; item.userData.racked = false;
+          camera.add(item);
+          item.position.set(0.45, -0.35, -0.9); item.rotation.set(0, 0, 0);
+        }
+        drop(camera) {
+          if (!this.held) return;
+          const item = this.held;
+          const worldPos = new THREE.Vector3(); item.getWorldPosition(worldPos);
+          camera.remove(item); this.scene.add(item);
+          const ground = this.world.groundHeightAt(worldPos.x, worldPos.z, camera.position.y) ?? 0;
+          const h = item.userData.def.size[1];
+          item.position.set(worldPos.x, ground + h / 2 + 0.02, worldPos.z);
+          item.rotation.set(0, 0, 0);
+          this.held = null;
+        }
+        placeInRack(rack, camera) {
+          if (!this.held) return false;
+          const slot = rack.nextFreeSlot();
+          if (!slot) return false;
+          const item = this.held;
+          camera.remove(item); this.scene.add(item);
+          item.position.copy(slot.position); item.rotation.set(0, 0, 0);
+          slot.filled = true; item.userData.racked = true;
+          this.held = null; this.rackedCount++;
+          return true;
+        }
+      }
+
+      /* ============================================================ THE PLAYER */
+      function createPlayer(camera, domElement, world) {
+        const controls = new PointerLockControls(camera, domElement);
+        const start = world.spawnPoint;
+        camera.position.set(start.x, start.y + EYE_HEIGHT, start.z);
+
+        const keys = Object.create(null);
+        document.addEventListener("keydown", (e) => (keys[e.code] = true));
+        document.addEventListener("keyup", (e) => (keys[e.code] = false));
+
+        const forward = new THREE.Vector3(), right = new THREE.Vector3(), move = new THREE.Vector3();
+        let velocityY = 0;
+
+        function update(dt) {
+          if (!controls.isLocked) return;
+          camera.getWorldDirection(forward); forward.y = 0; forward.normalize();
+          right.crossVectors(forward, camera.up).normalize();
+          move.set(0, 0, 0);
+          if (keys["KeyW"] || keys["ArrowUp"]) move.add(forward);
+          if (keys["KeyS"] || keys["ArrowDown"]) move.sub(forward);
+          if (keys["KeyD"] || keys["ArrowRight"]) move.add(right);
+          if (keys["KeyA"] || keys["ArrowLeft"]) move.sub(right);
+          const speed = keys["ShiftLeft"] || keys["ShiftRight"] ? SPRINT_SPEED : WALK_SPEED;
+          if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed * dt);
+
+          const pos = camera.position;
+          pos.x += move.x; resolveCollisions(pos, world.colliders, "x");
+          pos.z += move.z; resolveCollisions(pos, world.colliders, "z");
+
+          const feetY = pos.y - EYE_HEIGHT;
+          const ground = world.groundHeightAt(pos.x, pos.z, feetY);
+          if (ground === null) {
+            velocityY -= GRAVITY * dt; pos.y += velocityY * dt;
+          } else if (feetY <= ground + 0.001) {
+            pos.y = ground + EYE_HEIGHT; velocityY = 0;
+          } else {
+            velocityY -= GRAVITY * dt;
+            const nextFeet = Math.max(ground, feetY + velocityY * dt);
+            pos.y = nextFeet + EYE_HEIGHT;
+            if (nextFeet === ground) velocityY = 0;
+          }
+          if (pos.y < -20) respawn();
+        }
+
+        function resolveCollisions(pos, colliders, axis) {
+          const feetY = pos.y - EYE_HEIGHT, headY = pos.y + 0.1;
+          for (const c of colliders) {
+            if (headY < c.minY || feetY > c.maxY) continue;
+            const nearestX = THREE.MathUtils.clamp(pos.x, c.minX, c.maxX);
+            const nearestZ = THREE.MathUtils.clamp(pos.z, c.minZ, c.maxZ);
+            const dx = pos.x - nearestX, dz = pos.z - nearestZ;
+            const distSq = dx * dx + dz * dz;
+            if (distSq > RADIUS * RADIUS) continue;
+            if (distSq > 1e-8) {
+              const dist = Math.sqrt(distSq), push = RADIUS - dist;
+              pos.x += (dx / dist) * push; pos.z += (dz / dist) * push;
+            } else if (axis === "x") {
+              const toLeft = pos.x - c.minX, toRight = c.maxX - pos.x;
+              pos.x += toLeft < toRight ? -(toLeft + RADIUS) : toRight + RADIUS;
+            } else {
+              const toNorth = pos.z - c.minZ, toSouth = c.maxZ - pos.z;
+              pos.z += toNorth < toSouth ? -(toNorth + RADIUS) : toSouth + RADIUS;
+            }
+          }
+        }
+        function respawn() { velocityY = 0; camera.position.set(start.x, start.y + EYE_HEIGHT, start.z); }
+        const currentFloor = () => (camera.position.y - EYE_HEIGHT > world.floor2Y - 1 ? 2 : 1);
+        return { controls, update, respawn, currentFloor };
+      }
+
+      /* ============================================================ UI HELPERS */
+      const ui = {
+        crosshair: document.getElementById("crosshair"),
+        hud: document.getElementById("hud"),
+        overlay: document.getElementById("overlay"),
+        prompt: document.getElementById("prompt"),
+        location: document.getElementById("hud-location"),
+        racked: document.getElementById("hud-racked"),
+        held: document.getElementById("hud-held"),
+        startBtn: document.getElementById("start-btn"),
+        showGame(v) {
+          this.crosshair.classList.toggle("hidden", !v);
+          this.hud.classList.toggle("hidden", !v);
+          this.overlay.classList.toggle("hidden", v);
+        },
+        setPrompt(t) {
+          if (t) { this.prompt.innerHTML = t; this.prompt.classList.add("show"); }
+          else this.prompt.classList.remove("show");
+        },
+        setLocation(t) { this.location.textContent = t; },
+        setRacked(n, total) { this.racked.textContent = `Items racked: ${n}${total ? " / " + total : ""}`; },
+        setHeld(name) { this.held.textContent = name ? `Hands: ${name}` : "Hands: empty"; },
+      };
+
+      /* ============================================================ BOOTSTRAP */
+      const canvas = document.getElementById("scene");
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0a0d12);
+      scene.fog = new THREE.Fog(0x0a0d12, 28, 55);
+
+      const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.05, 200);
+      scene.add(camera); // needed so the held item (a child of the camera) renders
+
+      scene.add(new THREE.HemisphereLight(0xdfe9f5, 0x40454c, 0.85));
+      const sun = new THREE.DirectionalLight(0xffffff, 0.7);
+      sun.position.set(18, 30, 12);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(2048, 2048);
+      sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
+      sun.shadow.camera.left = -25; sun.shadow.camera.right = 25;
+      sun.shadow.camera.top = 25; sun.shadow.camera.bottom = -25;
+      scene.add(sun);
+
+      for (const [x, y, z] of [
+        [-7, 2.6, -3], [-6, 2.6, 3], [6, 2.6, 0],
+        [-6, 5.8, -2], [6, 5.8, -2], [0, 5.8, -4],
+      ]) {
+        const lamp = new THREE.PointLight(0xfff0dd, 0.6, 16, 1.6);
+        lamp.position.set(x, y, z); scene.add(lamp);
+      }
+
+      const world = buildWorld(scene);
+      const player = createPlayer(camera, renderer.domElement, world);
+      const items = new ItemManager(scene, world);
+      items.spawnAll();
+
+      const totalSlots = world.racks.reduce((n, r) => n + r.slots.length, 0);
+      ui.setRacked(0, totalSlots);
+
+      ui.startBtn.addEventListener("click", () => player.controls.lock());
+      player.controls.addEventListener("lock", () => ui.showGame(true));
+      player.controls.addEventListener("unlock", () => ui.showGame(false));
+
+      document.addEventListener("keydown", (e) => {
+        if (!player.controls.isLocked) return;
+        if (e.code === "KeyE") {
+          const pos = camera.position;
+          if (items.held) {
+            const rack = items.findNearestRack(pos);
+            if (rack) { items.placeInRack(rack, camera); ui.setHeld(null); ui.setRacked(items.rackedCount, totalSlots); }
+          } else {
+            const item = items.findNearestPickup(pos);
+            if (item) { items.pickUp(item, camera); ui.setHeld(item.userData.def.name); }
+          }
+        }
+        if (e.code === "KeyQ" && items.held) { items.drop(camera); ui.setHeld(null); }
+      });
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      const clock = new THREE.Clock();
+      let lastFloor = 1;
+      function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(clock.getDelta(), 0.05);
+        player.update(dt);
+        if (player.controls.isLocked) {
+          updatePrompt();
+          const floor = player.currentFloor();
+          if (floor !== lastFloor) { lastFloor = floor; ui.setLocation(floor === 2 ? "Second Floor" : "First Floor"); }
+        }
+        renderer.render(scene, camera);
+      }
+      function updatePrompt() {
+        const pos = camera.position;
+        if (items.held) {
+          const rack = items.findNearestRack(pos);
+          if (rack) {
+            const def = items.held.userData.def;
+            const note = def.rackable ? "" : " (not rack gear, but ok)";
+            ui.setPrompt(`<b>E</b> Place ${def.name} in rack${note}`);
+          } else {
+            ui.setPrompt(`<b>Q</b> Drop ${items.held.userData.def.name}`);
+          }
+        } else {
+          const item = items.findNearestPickup(pos);
+          ui.setPrompt(item ? `<b>E</b> Pick up ${item.userData.def.name}` : "");
+        }
+      }
+      animate();
+    </script>
+
+    <!-- If the CDN can't load (no internet), show a friendly message. -->
+    <script>
+      setTimeout(() => {
+        if (!document.querySelector("canvas").getContext) return;
+        // crude check: if Three never started, the start button still works but
+        // nothing renders — surface a hint after a few seconds.
+      }, 100);
+      window.addEventListener("error", (e) => {
+        const err = document.getElementById("error");
+        if (err) {
+          err.style.display = "block";
+          err.textContent =
+            "Could not load the 3D engine. Make sure you're connected to the internet, then reload this page.";
+        }
+      });
+    </script>
+  </body>
+</html>
