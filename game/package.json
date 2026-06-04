@@ -1,0 +1,7 @@
+{
+  "name": "network-closet-3d",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A 3D walk-around office where you rack network gear (IT Fundamentals project)."
+}

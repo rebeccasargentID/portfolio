@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Network Closet 3D — IT Fundamentals</title>
+    <link rel="stylesheet" href="./style.css" />
+
+    <!-- Import map lets us use clean "three" imports straight from a CDN.
+         No build step required: just serve this folder over http. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <!-- The 3D scene renders into this canvas -->
+    <canvas id="scene"></canvas>
+
+    <!-- Fixed crosshair in the middle of the screen -->
+    <div id="crosshair" class="hidden">+</div>
+
+    <!-- Heads-up display: top-left status, bottom interaction prompt -->
+    <div id="hud" class="hidden">
+      <div id="hud-top">
+        <div id="hud-location">First Floor</div>
+        <div id="hud-racked">Items racked: 0</div>
+        <div id="hud-held">Hands: empty</div>
+      </div>
+      <div id="prompt"></div>
+    </div>
+
+    <!-- Start / pause screen shown before pointer lock -->
+    <div id="overlay">
+      <div id="overlay-card">
+        <h1>Network Closet 3D</h1>
+        <p class="subtitle">A walk-around version of your Packet Tracer layout.</p>
+        <ul id="controls">
+          <li><b>Move</b> — W A S D</li>
+          <li><b>Look</b> — Mouse</li>
+          <li><b>Sprint</b> — Shift</li>
+          <li><b>Pick up / Place in rack</b> — E</li>
+          <li><b>Drop held item</b> — Q</li>
+          <li><b>Pause</b> — Esc</li>
+        </ul>
+        <p class="goal">
+          Goal: explore both floors, pick up the network gear scattered around the
+          offices, and rack it in the two <b>wiring closets</b>.
+        </p>
+        <button id="start-btn">Click to Play</button>
+        <p id="loading" class="hidden">Loading 3D engine…</p>
+      </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
